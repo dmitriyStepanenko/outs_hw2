@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+from collections import OrderedDict
+from inspect import Parameter, Signature
 import abc
 import json
 from datetime import datetime
@@ -10,7 +12,6 @@ import uuid
 from optparse import OptionParser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Dict, Tuple
-from weakref import WeakKeyDictionary
 import scoring
 
 SALT = "Otus"
@@ -39,32 +40,39 @@ GENDERS = {
 }
 METHOD_ONLINE_SCORE = 'online_score'
 METHOD_CLIENTS_INTERESTS = 'clients_interests'
+METHODS = [METHOD_ONLINE_SCORE, METHOD_CLIENTS_INTERESTS]
 
 
 class BaseField:
     def __init__(self, required: bool, nullable: bool):
         self._is_nullable = nullable
         self._is_required = required
-        self.data = WeakKeyDictionary()
 
     def __set__(self, instance, value):
         if self._is_required and value is None:
             raise ValueError(f'Поле {instance} должно быть обязательно заполнено')
-        if value is not None:
-            self.validate(instance, value)
-            self.data[instance] = value
-
-    def __get__(self, instance, owner):
-        return self.data.get(instance)
-
-    def validate(self, instance, value):
         if not self._is_nullable and not value:
             raise ValueError(f'Поле {instance} должно быть не пусто')
+        if value is not None:
+            self.validate(instance, value)
+
+        instance.__dict__[self._name] = value
+
+    def __get__(self, instance, owner):
+        if instance:
+            return instance.__dict__.get(self._name)
+        else:
+            raise ValueError()
+
+    def __set_name__(self, owner, name):
+        self._name = name
+
+    def validate(self, instance, value):
+        ...
 
 
 class CharField(BaseField):
     def validate(self, instance, value):
-        super(CharField, self).validate(instance, value)
         if not isinstance(value, str):
             raise ValueError(f'{instance} должен быть строкой')
 
@@ -82,7 +90,6 @@ class EmailField(CharField):
 
 class PhoneField(BaseField):
     def validate(self, instance, value):
-        super(PhoneField, self).validate(instance, value)
         if not (isinstance(value, str) or isinstance(value, int)):
             raise ValueError('Телефон должен быть или строкой или числом')
         str_value = str(value)
@@ -98,7 +105,7 @@ class DateField(CharField):
         datetime.strptime(value, '%d.%m.%Y')
 
 
-class BirthDayField(CharField):
+class BirthDayField(DateField):
     def validate(self, instance, value):
         super(BirthDayField, self).validate(instance, value)
 
@@ -117,8 +124,6 @@ class GenderField(BaseField):
 
 class ClientIDsField(BaseField):
     def validate(self, instance, value):
-        super(ClientIDsField, self).validate(instance, value)
-
         if not isinstance(value, list):
             raise ValueError('ClientIDs должен быть списком')
 
@@ -127,16 +132,42 @@ class ClientIDsField(BaseField):
                 raise ValueError('в списке ClientIDs должны быть только числа')
 
 
-class ClientsInterestsRequest(object):
+def make_signature(names):
+    return Signature(Parameter(name=name, kind=Parameter.POSITIONAL_OR_KEYWORD, default=None) for name in names)  # type: ignore
+
+
+class StructMeta(type):
+    @classmethod
+    def __prepare__(mcs, name, bases):
+        return OrderedDict()
+
+    def __new__(mcs, clsname, bases, attrs):
+        fields = [key for key, val in attrs.items() if isinstance(val, BaseField)]
+
+        for name in fields:
+            attrs[name].name = name
+
+        clsobj = super().__new__(mcs, clsname, bases, dict(attrs))
+        sig = make_signature(fields)
+        setattr(clsobj, '__signature__', sig)
+        return clsobj
+
+
+class Structure(metaclass=StructMeta):
+    _fields = []
+
+    def __init__(self, *struct_args, **struct_kwargs):
+        bound = self.__signature__.bind(*struct_args, **struct_kwargs)  # type: ignore
+        for name, val in bound.arguments.items():
+            setattr(self, name, val)
+
+
+class ClientsInterestsRequest(Structure):
     client_ids = ClientIDsField(required=True, nullable=False)
     date = DateField(required=False, nullable=True)
 
-    def __init__(self, client_ids=None, date=None):
-        self.date = date
-        self.client_ids = client_ids
 
-
-class OnlineScoreRequest(object):
+class OnlineScoreRequest(Structure):
     first_name = CharField(required=False, nullable=True)
     last_name = CharField(required=False, nullable=True)
     email = EmailField(required=False, nullable=True)
@@ -144,33 +175,19 @@ class OnlineScoreRequest(object):
     birthday = BirthDayField(required=False, nullable=True)
     gender = GenderField(required=False, nullable=True)
 
-    def __init__(self, first_name=None, last_name=None, email=None, phone=None, birthday=None, gender=None):
-        self.first_name = first_name
-        self.last_name = last_name
-        self.email = email
-        self.phone = phone
-        self.birthday = birthday
-        self.gender = gender
-
+    def validate(self):
         if not (self.email and self.phone or
                 self.gender is not None and self.birthday or
                 self.first_name and self.last_name):
             raise ValueError('Не валидный запрос')
 
 
-class MethodRequest(object):
+class MethodRequest(Structure):
     account = CharField(required=False, nullable=True)
     login = CharField(required=True, nullable=True)
     token = CharField(required=True, nullable=True)
     arguments = ArgumentsField(required=True, nullable=True)
     method = CharField(required=True, nullable=False)
-
-    def __init__(self, account=None, login=None, token=None, arguments=None, method=None, header=None):
-        self.account = account
-        self.login = login
-        self.token = token
-        self.arguments = arguments
-        self.method = method
 
     @property
     def is_admin(self):
@@ -190,42 +207,57 @@ def check_auth(request):
     return False
 
 
-def method_handler(request: Dict, ctx, store) -> Tuple[Dict, int]:
+def method_handler(request: Dict, ctx, store):
     """
     :return: response, code
     """
-    if len(request['body']) == 0:
-        return {"code": INVALID_REQUEST, "error": ERRORS[INVALID_REQUEST]}, INVALID_REQUEST
+    if not request['body']:
+        return None, INVALID_REQUEST
     try:
         method_request = MethodRequest(**request['body'])
         if not check_auth(method_request):
-            return {"code": FORBIDDEN, "error": ERRORS[FORBIDDEN]}, FORBIDDEN
+            return None, FORBIDDEN
+
+        if not method_request.arguments:
+            raise ValueError('Аргументы пусты')
 
         if method_request.method == METHOD_ONLINE_SCORE:
-            online_req = OnlineScoreRequest(**method_request.arguments)
-            ctx['has'] = method_request.arguments.keys()
-            score = scoring.get_score(
-                store=store,
-                phone=online_req.phone,
-                email=online_req.email,
-                birthday=online_req.birthday,
-                gender=online_req.gender,
-                first_name=online_req.first_name,
-                last_name=online_req.last_name,
-            ) if not method_request.is_admin else 42
-            return {"score": score}, OK
+            return get_online_score(method_request, ctx, store)
 
-        if method_request.method == METHOD_CLIENTS_INTERESTS:
-            client_req = ClientsInterestsRequest(**method_request.arguments)
-            ctx['nclients'] = len(client_req.client_ids)
-            interests = {}
-            for client_id in client_req.client_ids:
-                interests[client_id] = scoring.get_interests(store, cid=client_id)
-            return interests, OK
+        elif method_request.method == METHOD_CLIENTS_INTERESTS:
+            return get_client_interests(method_request, ctx, store)
+
+        else:
+            raise ValueError('Неизвестный метод')
 
     except Exception as e:
         logging.exception(e)
-        return {"code": INVALID_REQUEST, "error": ERRORS[INVALID_REQUEST]}, INVALID_REQUEST
+        return None, INVALID_REQUEST
+
+
+def get_online_score(method_request, ctx, store):
+    online_req = OnlineScoreRequest(**method_request.arguments)
+    online_req.validate()
+    ctx['has'] = method_request.arguments.keys()
+    score = scoring.get_score(
+        store=store,
+        phone=online_req.phone,
+        email=online_req.email,
+        birthday=online_req.birthday,
+        gender=online_req.gender,
+        first_name=online_req.first_name,
+        last_name=online_req.last_name,
+    ) if not method_request.is_admin else 42
+    return {"score": score}, OK
+
+
+def get_client_interests(method_request, ctx, store):
+    client_req = ClientsInterestsRequest(**method_request.arguments)
+    ctx['nclients'] = len(client_req.client_ids)
+    interests = {}
+    for client_id in client_req.client_ids:
+        interests[client_id] = scoring.get_interests(store, cid=client_id)
+    return interests, OK
 
 
 class MainHTTPHandler(BaseHTTPRequestHandler):

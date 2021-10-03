@@ -55,7 +55,7 @@ class TestSuite(unittest.TestCase):
         self.set_valid_auth(request)
         response, code = self.get_response(request)
         self.assertEqual(api.INVALID_REQUEST, code)
-        self.assertTrue(len(response))
+        self.assertIsNone(response)
 
     @cases([
         {},
@@ -77,7 +77,7 @@ class TestSuite(unittest.TestCase):
         self.set_valid_auth(request)
         response, code = self.get_response(request)
         self.assertEqual(api.INVALID_REQUEST, code, arguments)
-        self.assertTrue(len(response))
+        self.assertIsNone(response)
 
     @cases([
         {"phone": "79175002040", "email": "stupnikov@otus.ru"},
@@ -120,7 +120,7 @@ class TestSuite(unittest.TestCase):
         self.set_valid_auth(request)
         response, code = self.get_response(request)
         self.assertEqual(api.INVALID_REQUEST, code, arguments)
-        self.assertTrue(len(response))
+        self.assertIsNone(response)
 
     @cases([
         {"client_ids": [1, 2, 3], "date": datetime.datetime.today().strftime("%d.%m.%Y")},

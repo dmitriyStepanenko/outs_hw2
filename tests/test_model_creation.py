@@ -210,8 +210,8 @@ def test_online_score_invalid_creating(params, error):
 
 @pytest.mark.parametrize('params', [
     {'first_name': 'a', 'last_name': 'b',
-      'email': 'a@b.com', 'phone': 77_777_777_777,
-      'birthday': '1.2.2000', 'gender': 1},
+     'email': 'a@b.com', 'phone': 77_777_777_777,
+     'birthday': '1.2.2000', 'gender': 1},
     {'first_name': '', 'email': '', 'birthday': ''},
     {'first_name': '', 'last_name': ''},
     {'phone': '77777777777', 'gender': 0},

@@ -13,6 +13,7 @@ from optparse import OptionParser
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Dict, Tuple
 import scoring
+from store import Storage
 
 SALT = "Otus"
 ADMIN_LOGIN = "admin"
@@ -50,10 +51,10 @@ class BaseField:
 
     def __set__(self, instance, value):
         if self._is_required and value is None:
-            raise ValueError(f'Поле {instance} должно быть обязательно заполнено')
-        if not self._is_nullable and not value:
-            raise ValueError(f'Поле {instance} должно быть не пусто')
+            raise ValueError(f'Поле {self._name} должно быть обязательно заполнено')
         if value is not None:
+            if not self._is_nullable and not value:
+                raise ValueError(f'Поле {self._name} должно быть не пусто')
             self.validate(instance, value)
 
         instance.__dict__[self._name] = value
@@ -74,7 +75,7 @@ class BaseField:
 class CharField(BaseField):
     def validate(self, instance, value):
         if not isinstance(value, str):
-            raise ValueError(f'{instance} должен быть строкой')
+            raise ValueError(f'{self._name} должен быть строкой')
 
 
 class ArgumentsField(BaseField):
@@ -157,9 +158,11 @@ class Structure(metaclass=StructMeta):
     _fields = []
 
     def __init__(self, *struct_args, **struct_kwargs):
-        bound = self.__signature__.bind(*struct_args, **struct_kwargs)  # type: ignore
-        for name, val in bound.arguments.items():
-            setattr(self, name, val)
+        sum_args = {key: val for key, val in zip(self.__signature__.parameters, struct_args)}
+        sum_args.update(struct_kwargs)
+        for param_name in self.__signature__.parameters:
+            setattr(self, param_name, sum_args.get(param_name))
+
 
 
 class ClientsInterestsRequest(Structure):
@@ -264,7 +267,7 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
     router = {
         "method": method_handler
     }
-    store = None
+    store = Storage()
 
     def get_request_id(self, headers):
         return headers.get('HTTP_X_REQUEST_ID', uuid.uuid4().hex)

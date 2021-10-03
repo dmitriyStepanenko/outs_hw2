@@ -169,7 +169,7 @@ def test_client_interests_ok_creating(params):
 @pytest.mark.parametrize('params, error', [
     ({}, 'Поле client_ids должно быть обязательно заполнено'),
     ({'client_ids': 1, 'date': '1.1.1000'}, 'ClientIDs должен быть списком'),
-    ({'date': '1.1.1000'}, ''),
+    ({'date': '1.1.1000'}, 'Поле client_ids должно быть обязательно заполнено'),
 ])
 def test_client_interests_invalid_creating(params, error):
     try:
@@ -178,3 +178,75 @@ def test_client_interests_invalid_creating(params, error):
     except ValueError as e:
         assert str(e) == error
 
+
+@pytest.mark.parametrize('params', [
+    {'first_name': 'a', 'last_name': 'b',
+     'email': 'a@b.com', 'phone': 77_777_777_777,
+     'birthday': '1.2.2000', 'gender': 1},
+    {'first_name': '', 'email': '', 'birthday': ''},
+    {'first_name': '', 'last_name': ''},
+    {'phone': '77777777777', 'gender': 0},
+    {}
+])
+def test_online_score_ok_creating(params):
+    cli_req = api.OnlineScoreRequest(**params)
+
+    for key, val in params.items():
+        assert getattr(cli_req, key) == val
+
+
+@pytest.mark.parametrize('params, error', [
+    ({}, 'Поле client_ids должно быть обязательно заполнено'),
+    ({'client_ids': 1, 'date': '1.1.1000'}, 'ClientIDs должен быть списком'),
+    ({'date': '1.1.1000'}, 'Поле client_ids должно быть обязательно заполнено'),
+])
+def test_online_score_invalid_creating(params, error):
+    try:
+        api.OnlineScoreRequest(**params)
+
+    except ValueError as e:
+        assert str(e) == error
+
+
+@pytest.mark.parametrize('params', [
+    {'first_name': 'a', 'last_name': 'b',
+      'email': 'a@b.com', 'phone': 77_777_777_777,
+      'birthday': '1.2.2000', 'gender': 1},
+    {'first_name': '', 'email': '', 'birthday': ''},
+    {'first_name': '', 'last_name': ''},
+    {'phone': '77777777777', 'gender': 0},
+    {},
+    {'phone': '77777777777', 'email': ''},
+    {'birthday': '1.5.2039', 'gender': 0},
+])
+def test_online_score_validate(params):
+    cli_req = api.OnlineScoreRequest(**params)
+
+    try:
+        assert cli_req.validate() is None
+    except ValueError as e:
+        assert str(e) == 'Не валидный запрос'
+
+
+@pytest.mark.parametrize('params', [
+    {'account': 'a', 'login': 'b', 'token': '1', 'arguments': {}, 'method': 'a'},
+    {'login': 'b', 'token': '1', 'arguments': {}, 'method': 'a'},
+    {'account': '', 'login': '', 'token': '1', 'arguments': {'a': 'b'}, 'method': 'a'},
+])
+def test_method_request_ok_creating(params):
+    cli_req = api.MethodRequest(**params)
+
+    for key, val in params.items():
+        assert getattr(cli_req, key) == val
+
+
+@pytest.mark.parametrize('params, error', [
+    ({'account': 'a', 'token': '1', 'arguments': {}, 'method': ''}, 'Поле login должно быть обязательно заполнено'),
+    ({'login': 'b', 'token': '1', 'arguments': {}, 'method': ''}, 'Поле method должно быть не пусто'),
+    ({'account': '', 'login': '', 'token': 1, 'arguments': {'a': 'b'}, 'method': 'a'}, 'token должен быть строкой'),
+])
+def test_method_request_invalid_creating(params, error):
+    try:
+        api.MethodRequest(**params)
+    except ValueError as e:
+        assert str(e) == error

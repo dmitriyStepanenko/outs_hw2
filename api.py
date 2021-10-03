@@ -50,11 +50,7 @@ class BaseField:
         self._is_required = required
 
     def __set__(self, instance, value):
-        if self._is_required and value is None:
-            raise ValueError(f'Поле {self._name} должно быть обязательно заполнено')
-        if value is not None:
-            if not self._is_nullable and not value:
-                raise ValueError(f'Поле {self._name} должно быть не пусто')
+        if self.is_ready_to_validate(value):
             self.validate(instance, value)
 
         instance.__dict__[self._name] = value
@@ -70,6 +66,21 @@ class BaseField:
 
     def validate(self, instance, value):
         ...
+
+    def is_ready_to_validate(self, value):
+        if self._is_required and value is None:
+            raise ValueError(f'Поле {self._name} должно быть обязательно заполнено')
+
+        if value is None:
+            return False
+
+        if not self._is_nullable and not value:
+            raise ValueError(f'Поле {self._name} должно быть не пусто')
+
+        if not value:
+            return False
+
+        return True
 
 
 class CharField(BaseField):
@@ -162,7 +173,6 @@ class Structure(metaclass=StructMeta):
         sum_args.update(struct_kwargs)
         for param_name in self.__signature__.parameters:
             setattr(self, param_name, sum_args.get(param_name))
-
 
 
 class ClientsInterestsRequest(Structure):

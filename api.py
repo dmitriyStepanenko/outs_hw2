@@ -2,8 +2,6 @@
 # -*- coding: utf-8 -*-
 
 from collections import OrderedDict
-from inspect import Parameter, Signature
-import abc
 import json
 from datetime import datetime
 import logging
@@ -11,7 +9,7 @@ import hashlib
 import uuid
 from optparse import OptionParser
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from typing import Dict, Tuple
+from typing import Dict
 import scoring
 from store import Storage
 
@@ -50,21 +48,35 @@ class BaseField:
         self._is_required = required
 
     def __set__(self, instance, value):
-        if self.is_ready_to_validate(value):
-            self.validate(instance, value)
-
         instance.__dict__[self._name] = value
 
     def __get__(self, instance, owner):
-        if instance:
-            return instance.__dict__.get(self._name)
-        else:
-            raise ValueError()
+        return instance.__dict__.get(self._name)
 
     def __set_name__(self, owner, name):
         self._name = name
 
-    def validate(self, instance, value):
+    def validate(self, value):
+        if self._is_required and value is None:
+            raise ValueError(f'Поле {self._name} должно быть обязательно заполнено')
+
+        if value is None:
+            return
+
+        self.is_instance(value)
+
+        if not self._is_nullable and not value:
+            raise ValueError(f'Поле {self._name} должно быть не пусто')
+
+        if not value:
+            return
+
+        self.add_validate(value)
+
+    def is_instance(self, value):
+        ...
+
+    def add_validate(self, value):
         ...
 
     def is_ready_to_validate(self, value):
@@ -84,7 +96,7 @@ class BaseField:
 
 
 class CharField(BaseField):
-    def validate(self, instance, value):
+    def is_instance(self, value):
         if not isinstance(value, str):
             raise ValueError(f'{self._name} должен быть строкой')
 
@@ -94,16 +106,17 @@ class ArgumentsField(BaseField):
 
 
 class EmailField(CharField):
-    def validate(self, instance, value):
-        super(EmailField, self).validate(instance, value)
+    def add_validate(self, value):
         if value.find('@') == -1:
             raise ValueError('Email должен содержать @')
 
 
 class PhoneField(BaseField):
-    def validate(self, instance, value):
+    def is_instance(self, value):
         if not (isinstance(value, str) or isinstance(value, int)):
             raise ValueError('Телефон должен быть или строкой или числом')
+
+    def add_validate(self, value):
         str_value = str(value)
         if str_value[0] != '7':
             raise ValueError('Телефон должен начинаться с 7')
@@ -112,40 +125,34 @@ class PhoneField(BaseField):
 
 
 class DateField(CharField):
-    def validate(self, instance, value):
-        super(DateField, self).validate(instance, value)
+    def add_validate(self, value):
         datetime.strptime(value, '%d.%m.%Y')
 
 
 class BirthDayField(DateField):
-    def validate(self, instance, value):
-        super(BirthDayField, self).validate(instance, value)
-
+    def add_validate(self, value):
         if (datetime.now() - datetime.strptime(value, '%d.%m.%Y')).days > 70 * 365:
             raise ValueError('Дата дня рождения должна быть не больше 70 лет назад')
 
 
 class GenderField(BaseField):
-    def validate(self, instance, value):
+    def is_instance(self, value):
         if not isinstance(value, int):
             raise ValueError('Гендер должен быть числом')
 
+    def add_validate(self, value):
         if value not in list(GENDERS.keys()):
             raise ValueError('Значение гендера должно быть 0, 1 или 2')
 
 
 class ClientIDsField(BaseField):
-    def validate(self, instance, value):
+    def is_instance(self, value):
         if not isinstance(value, list):
             raise ValueError('ClientIDs должен быть списком')
 
         for d in value:
             if not (isinstance(d, int) or isinstance(d, float)):
                 raise ValueError('в списке ClientIDs должны быть только числа')
-
-
-def make_signature(names):
-    return Signature(Parameter(name=name, kind=Parameter.POSITIONAL_OR_KEYWORD, default=None) for name in names)  # type: ignore
 
 
 class StructMeta(type):
@@ -155,24 +162,28 @@ class StructMeta(type):
 
     def __new__(mcs, clsname, bases, attrs):
         fields = [key for key, val in attrs.items() if isinstance(val, BaseField)]
+        fields_types = [val for key, val in attrs.items() if isinstance(val, BaseField)]
 
         for name in fields:
             attrs[name].name = name
 
         clsobj = super().__new__(mcs, clsname, bases, dict(attrs))
-        sig = make_signature(fields)
-        setattr(clsobj, '__signature__', sig)
+        setattr(clsobj, '_fields', fields)
+        setattr(clsobj, '_fields_types', fields_types)
         return clsobj
 
 
 class Structure(metaclass=StructMeta):
-    _fields = []
-
     def __init__(self, *struct_args, **struct_kwargs):
-        sum_args = {key: val for key, val in zip(self.__signature__.parameters, struct_args)}
+        sum_args = {key: val for key, val in zip(self._fields, struct_args)}
         sum_args.update(struct_kwargs)
-        for param_name in self.__signature__.parameters:
+        for param_name in self._fields:
             setattr(self, param_name, sum_args.get(param_name))
+
+    def validate(self):
+        for field, f_type in zip(self._fields, self._fields_types):
+            f_atr = getattr(self, field)
+            f_type.validate(f_atr)
 
 
 class ClientsInterestsRequest(Structure):
@@ -189,6 +200,7 @@ class OnlineScoreRequest(Structure):
     gender = GenderField(required=False, nullable=True)
 
     def validate(self):
+        super(OnlineScoreRequest, self).validate()
         if not (self.email and self.phone or
                 self.gender is not None and self.birthday or
                 self.first_name and self.last_name):
@@ -231,6 +243,8 @@ def method_handler(request: Dict, ctx, store):
         if not check_auth(method_request):
             return None, FORBIDDEN
 
+        method_request.validate()
+
         if not method_request.arguments:
             raise ValueError('Аргументы пусты')
 
@@ -266,6 +280,7 @@ def get_online_score(method_request, ctx, store):
 
 def get_client_interests(method_request, ctx, store):
     client_req = ClientsInterestsRequest(**method_request.arguments)
+    client_req.validate()
     ctx['nclients'] = len(client_req.client_ids)
     interests = {}
     for client_id in client_req.client_ids:

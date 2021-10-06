@@ -1,31 +1,6 @@
-import json
-
 import scoring
 import pytest
 from datetime import datetime
-import hashlib
-
-
-@pytest.fixture
-def store():
-    class Store:
-        def __init__(self, cache: dict = None):
-            self.cache = cache if cache else {}
-
-        def get(self, name):
-            return self.cache.get(name)
-
-        def cache_get(self, name):
-            return self.get(name)
-
-        def cache_set(self, name, value, time):
-            ...
-
-    cache = {
-        "uid:" + hashlib.md5("aab77777777777".encode('utf-8')).hexdigest(): 4,
-        "i:1": json.dumps(['a', 'b'])
-    }
-    return Store(cache)
 
 
 @pytest.mark.parametrize('phone, email, birthday, gender, first_name, last_name, answer', [

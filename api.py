@@ -175,13 +175,13 @@ class StructMeta(type):
 
 class Structure(metaclass=StructMeta):
     def __init__(self, *struct_args, **struct_kwargs):
-        sum_args = {key: val for key, val in zip(self._fields, struct_args)}
+        sum_args = {key: val for key, val in zip(self._fields, struct_args)}  # type: ignore
         sum_args.update(struct_kwargs)
-        for param_name in self._fields:
+        for param_name in self._fields:  # type: ignore
             setattr(self, param_name, sum_args.get(param_name))
 
     def validate(self):
-        for field, f_type in zip(self._fields, self._fields_types):
+        for field, f_type in zip(self._fields, self._fields_types):  # type: ignore
             f_atr = getattr(self, field)
             f_type.validate(f_atr)
 
@@ -236,7 +236,7 @@ def method_handler(request: Dict, ctx, store):
     """
     :return: response, code
     """
-    if not request['body']:
+    if not request.get('body'):
         return None, INVALID_REQUEST
     try:
         method_request = MethodRequest(**request['body'])
@@ -262,23 +262,23 @@ def method_handler(request: Dict, ctx, store):
         return None, INVALID_REQUEST
 
 
-def get_online_score(method_request, ctx, store):
+def get_online_score(method_request: MethodRequest, ctx: dict, store):
     online_req = OnlineScoreRequest(**method_request.arguments)
     online_req.validate()
-    ctx['has'] = method_request.arguments.keys()
+    ctx['has'] = list(method_request.arguments.keys())
     score = scoring.get_score(
         store=store,
-        phone=online_req.phone,
+        phone=str(online_req.phone),
         email=online_req.email,
-        birthday=online_req.birthday,
+        birthday=datetime.strptime(online_req.birthday, '%d.%m.%Y') if online_req.birthday else online_req.birthday,
         gender=online_req.gender,
         first_name=online_req.first_name,
         last_name=online_req.last_name,
     ) if not method_request.is_admin else 42
-    return {"score": score}, OK
+    return {"score": float(score)}, OK
 
 
-def get_client_interests(method_request, ctx, store):
+def get_client_interests(method_request: MethodRequest, ctx: dict, store):
     client_req = ClientsInterestsRequest(**method_request.arguments)
     client_req.validate()
     ctx['nclients'] = len(client_req.client_ids)
@@ -294,7 +294,8 @@ class MainHTTPHandler(BaseHTTPRequestHandler):
     }
     store = Storage()
 
-    def get_request_id(self, headers):
+    @staticmethod
+    def get_request_id(headers):
         return headers.get('HTTP_X_REQUEST_ID', uuid.uuid4().hex)
 
     def do_POST(self):

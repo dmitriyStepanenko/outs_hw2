@@ -47,17 +47,17 @@ class BaseField:
         self._is_required = required
 
     def __set__(self, instance, value):
-        instance.__dict__[self._name] = value
+        instance.__dict__[self.name] = value
 
     def __get__(self, instance, owner):
-        return instance.__dict__.get(self._name)
+        return instance.__dict__.get(self.name)
 
     def __set_name__(self, owner, name):
-        self._name = name
+        self.name = name
 
     def validate(self, value):
         if self._is_required and value is None:
-            raise ValueError(f'Поле {self._name} должно быть обязательно заполнено')
+            raise ValueError(f'Поле {self.name} должно быть обязательно заполнено')
 
         if value is None:
             return
@@ -65,7 +65,7 @@ class BaseField:
         self.is_instance(value)
 
         if not self._is_nullable and not value:
-            raise ValueError(f'Поле {self._name} должно быть не пусто')
+            raise ValueError(f'Поле {self.name} должно быть не пусто')
 
         if not value:
             return
@@ -73,16 +73,16 @@ class BaseField:
         self.add_validate(value)
 
     def is_instance(self, value):
-        ...
+        return NotImplemented
 
     def add_validate(self, value):
-        ...
+        return NotImplemented
 
 
 class CharField(BaseField):
     def is_instance(self, value):
         if not isinstance(value, str):
-            raise ValueError(f'{self._name} должен быть строкой')
+            raise ValueError(f'{self.name} должен быть строкой')
 
 
 class ArgumentsField(BaseField):
@@ -145,15 +145,15 @@ class StructMeta(type):
         return OrderedDict()
 
     def __new__(mcs, clsname, bases, attrs):
-        fields = [key for key, val in attrs.items() if isinstance(val, BaseField)]
-        fields_types = [val for key, val in attrs.items() if isinstance(val, BaseField)]
+        fields = []
 
-        for name in fields:
-            attrs[name].name = name
+        for key, val in attrs.items():
+            if isinstance(val, BaseField):
+                val.name = key
+                fields.append(val)
 
         clsobj = super().__new__(mcs, clsname, bases, dict(attrs))
         setattr(clsobj, '_fields', fields)
-        setattr(clsobj, '_fields_types', fields_types)
         return clsobj
 
 
@@ -162,12 +162,11 @@ class Structure(metaclass=StructMeta):
         sum_args = {key: val for key, val in zip(self._fields, struct_args)}
         sum_args.update(struct_kwargs)
         for param_name in self._fields:
-            setattr(self, param_name, sum_args.get(param_name))
+            setattr(self, param_name.name, sum_args.get(param_name.name))
 
     def validate(self):
-        for field, f_type in zip(self._fields, self._fields_types):
-            f_atr = getattr(self, field)
-            f_type.validate(f_atr)
+        for field in self._fields:
+            field.validate(getattr(self, field.name))
 
 
 class ClientsInterestsRequest(Structure):

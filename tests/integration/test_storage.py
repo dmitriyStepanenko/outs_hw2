@@ -1,6 +1,8 @@
 import time
 
 import pytest
+import redis
+
 from store import Storage
 
 
@@ -46,3 +48,19 @@ def test_cache_getting(storage):
     assert float(storage.cache_get('1')) == 1.5
     time.sleep(2)
     assert storage.cache_get('1') is None
+
+
+def test_reconnect(storage):
+    reconnect = True
+
+    def mock_get(self, name):
+        nonlocal reconnect
+        if reconnect:
+            reconnect = False
+            raise redis.ConnectionError
+        else:
+            return 3
+    storage.set('1', 3)
+    redis.Redis.get = mock_get
+
+    assert int(storage.get('1')) == 3
